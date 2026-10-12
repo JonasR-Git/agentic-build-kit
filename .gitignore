@@ -1,0 +1,5 @@
+node_modules/
+loop/.tasks-index.json
+loop/.state.jsonl
+*.log
+.DS_Store

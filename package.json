@@ -1,0 +1,17 @@
+{
+  "name": "agentic-build-kit",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "A deterministic local control plane for task-driven software delivery",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "demo:success": "node scripts/demo.mjs successful",
+    "demo:blocked": "node scripts/demo.mjs blocked",
+    "check": "npm test && npm run demo:success && npm run demo:blocked"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

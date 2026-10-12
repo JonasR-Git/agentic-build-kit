@@ -1,0 +1,18 @@
+{
+  "task_id": "DEMO-001",
+  "recorded_at": "2026-10-12T08:10:00Z",
+  "checks": {
+    "tests": {
+      "status": "pass",
+      "evidence": "Synthetic test suite: 4 passed"
+    },
+    "static_analysis": {
+      "status": "pass",
+      "evidence": "Node syntax checks completed"
+    },
+    "review": {
+      "status": "pass",
+      "evidence": "Synthetic independent review: no blocking findings"
+    }
+  }
+}
