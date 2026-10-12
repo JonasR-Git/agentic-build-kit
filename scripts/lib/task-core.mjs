@@ -19,7 +19,7 @@ export const SPECS_ROOT = 'docs/specs';
 export const REQUIRED_FIELDS = [
   'id', 'title', 'status', 'milestone', 'phase', 'priority', 'serves', 'created_at',
 ];
-export const VALID_STATUSES = ['pending', 'in_progress', 'completed', 'blocked', 'skipped'];
+export const VALID_STATUSES = ['pending', 'in_progress', 'completed', 'blocked'];
 export const VALID_PHASES = ['discovery', 'foundation', 'build', 'harden', 'decision'];
 export const VALID_PRIORITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 export const TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/;
@@ -29,7 +29,6 @@ const TRANSITIONS = {
   in_progress: new Set(['completed', 'blocked']),
   blocked: new Set(['in_progress']),
   completed: new Set(),
-  skipped: new Set(),
 };
 
 const ACTION_FOR_TRANSITION = {
@@ -69,6 +68,13 @@ export function validateTask(task, source = '<task>') {
     if (task[field] !== undefined && !Array.isArray(task[field])) {
       errors.push(`${source}: ${field} must be an array`);
     }
+  }
+  if (Array.isArray(task.specs)) {
+    task.specs.forEach((spec, index) => {
+      if (typeof spec !== 'string' || spec.trim() === '') {
+        errors.push(`${source}: specs[${index}] must be a non-empty path string`);
+      }
+    });
   }
   return errors;
 }
@@ -183,7 +189,10 @@ export function foldState(definitions, events, root = process.cwd()) {
     task.status = event.to;
     task.state_events += 1;
     task.updated_at = event.at;
-    if (event.to === 'in_progress') task.started_at = event.at;
+    if (event.to === 'in_progress') {
+      task.started_at = event.at;
+      delete task.blocked_reason;
+    }
     if (event.to === 'completed') {
       task.completed_at = event.at;
       task.evidence = event.evidence;
@@ -266,7 +275,7 @@ export function pickReady(tasks, candidateIds = null) {
   const milestones = [...new Set(tasks.map((task) => task.milestone))]
     .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
   const openMilestone = milestones.find((milestone) =>
-    tasks.some((task) => task.milestone === milestone && !['completed', 'skipped'].includes(task.status)));
+    tasks.some((task) => task.milestone === milestone && task.status !== 'completed'));
   if (!openMilestone) return null;
 
   const completed = new Set(tasks.filter((task) => task.status === 'completed').map((task) => task.id));
@@ -309,6 +318,7 @@ function transitiveDownstream(tasks) {
 export function checkReadiness(root = process.cwd()) {
   const checks = [];
   const add = (name, status, detail) => checks.push({ name, status, detail });
+  const project = loadProject(root);
   const specs = join(root, SPECS_ROOT);
   const foundation = [
     existsSync(join(specs, '00-vision.md')) || existsSync(join(specs, '00-product-brief.md')),
@@ -333,6 +343,31 @@ export function checkReadiness(root = process.cwd()) {
   add('unresolved markers', unresolved.length === 0 ? 'pass' : 'fail',
     unresolved.length === 0 ? 'none' : `${unresolved.reduce((sum, item) => sum + item.count, 0)} marker(s)`);
 
+  const declaredSpecs = [];
+  const invalidDeclaredSpecs = [];
+  for (const task of project.tasks) {
+    for (const spec of task.specs || []) {
+      if (typeof spec !== 'string' || spec.trim() === '') continue;
+      declaredSpecs.push(spec);
+      try {
+        const path = resolveProjectPath(spec, root);
+        if (!spec.toLowerCase().endsWith('.md')) {
+          invalidDeclaredSpecs.push(`${task.id}: ${spec} is not a Markdown file`);
+        } else if (!existsSync(path)) {
+          invalidDeclaredSpecs.push(`${task.id}: ${spec} was not found`);
+        } else if (!statSync(path).isFile()) {
+          invalidDeclaredSpecs.push(`${task.id}: ${spec} is not a file`);
+        }
+      } catch (error) {
+        invalidDeclaredSpecs.push(`${task.id}: ${spec} ${error.message}`);
+      }
+    }
+  }
+  add('declared task specifications', invalidDeclaredSpecs.length === 0 ? 'pass' : 'fail',
+    invalidDeclaredSpecs.length === 0
+      ? `${declaredSpecs.length} declared specification path(s) are project-local Markdown files`
+      : invalidDeclaredSpecs.join('; '));
+
   const adrDirectories = ['docs/ADRs', 'docs/adrs', join(SPECS_ROOT, 'architecture')]
     .map((path) => join(root, path));
   const adrDirectory = adrDirectories.find(existsSync);
@@ -355,7 +390,6 @@ export function checkReadiness(root = process.cwd()) {
     add('open decisions', open.length === 0 ? 'pass' : 'fail', open.length === 0 ? 'all resolved' : `${open.length} open`);
   }
 
-  const project = loadProject(root);
   add('task integrity', project.errors.length === 0 && project.tasks.length > 0 ? 'pass' : 'fail',
     project.errors.length ? project.errors.join('; ') : `${project.tasks.length} valid task(s)`);
   return { go: checks.every((check) => check.status !== 'fail'), checks };
@@ -434,6 +468,13 @@ export function transitionTask(action, taskId, options = {}, root = process.cwd(
     const completed = new Set(project.tasks.filter((candidate) => candidate.status === 'completed').map((candidate) => candidate.id));
     const missing = task.depends.filter((dependency) => !completed.has(dependency));
     if (missing.length) throw new Error(`incomplete dependencies: ${missing.join(', ')}`);
+    const readiness = checkReadiness(root);
+    if (!readiness.go) {
+      const failures = readiness.checks
+        .filter((check) => check.status === 'fail')
+        .map((check) => `${check.name}: ${check.detail}`);
+      throw new Error(`spec readiness NO-GO: ${failures.join('; ')}`);
+    }
   } else if (action === 'complete') {
     to = 'completed';
     if (!options.evidence) throw new Error('completion requires --evidence');

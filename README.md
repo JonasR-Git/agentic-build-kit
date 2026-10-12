@@ -1,117 +1,100 @@
-# Agentic Build Kit
+# Agentic Build Kit — Task & Evidence CLI
 
-A small, deterministic control plane for task-driven software delivery.
+[![CI](https://github.com/JonasR-Git/agentic-build-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/JonasR-Git/agentic-build-kit/actions/workflows/ci.yml)
 
-The kit turns Markdown task definitions into a validated index, selects work only when dependencies are complete, checks whether specifications are ready, records state transitions in an append-only ledger, and blocks completion unless structured verification evidence passes.
+**A local Node.js CLI for selecting tasks, recording progress and validating completion reports in agentic development workflows.**
 
-It deliberately does **not** call an AI model, execute commands from task files, merge pull requests, or claim that an evidence file is true. It provides the inspectable workflow boundary around those activities.
+The current release is a small reference implementation of task and evidence bookkeeping. It reads Markdown tasks, checks dependencies and specification files, and records task transitions. A separate developer, coding agent or CI system performs the implementation, tests and reviews, then supplies a JSON completion report.
 
-## Try it in under five minutes
+**Model execution, code generation, execution of your project's tests, pull requests and automatic merging are outside this release.** No adapters to model providers, GitHub, Sentry or email are included. The repository's own regression suite tests the CLI implementation.
 
-Requirements: Node.js 22 or newer. There are no runtime dependencies.
+## What the CLI does
+
+| Step | Implemented here | Supplied by an external workflow |
+| --- | --- | --- |
+| Define work | Validate Markdown task fields and dependency references | Write the task and its acceptance criteria |
+| Check preparation | Inspect required specification files and recognised unresolved markers | Review whether the specifications are actually sufficient |
+| Select a task | Consider dependencies, milestones and priorities | Decide how to implement the selected work |
+| Record progress | Append start, completion and block events to a local journal | Execute the work and report problems |
+| Check a completion report | Require matching task ID, timestamp and reported passes for tests, static analysis and review | Run those checks and provide trustworthy results |
+
+Specification readiness can be inspected with a **separate CLI command** and is also enforced when starting a task. A start requires every declared specification reference to resolve to a valid project-local Markdown file, the structural readiness checks to pass, and recorded dependencies to be completed. Tasks may have an empty `specs` list. These checks establish structural preparation, not semantic specification quality.
+
+## Try the two synthetic scenarios
+
+Use Node.js 22 or newer. Run from a clone of this repository; there is no published npm package and no runtime dependency or API key to configure.
 
 ```bash
 npm ci
-npm test
+npm run check
+```
+
+This runs the regression tests and both demos. To inspect a scenario separately:
+
+```bash
 npm run demo:success
 npm run demo:blocked
 ```
 
-The successful demo moves a synthetic task from `pending` to `completed`. The blocked demo supplies a failed review check, proves that completion is rejected, and records an explicit `blocked` transition. Both demos run in temporary copies, so the checked-in examples stay unchanged.
+- **Successful report:** the supplied sample report passes validation and the task reaches `completed`.
+- **Failed review report:** completion is rejected, then the demo explicitly records the task as `blocked`.
 
-The latest captured outputs are in [docs/DEMO_OUTPUTS.md](docs/DEMO_OUTPUTS.md).
+The demos use prewritten, fictional JSON reports in temporary copies of the example projects. They demonstrate validation and state transitions; no feature is generated and no AI review is performed. Captured output is in [DEMO_OUTPUTS.md](docs/DEMO_OUTPUTS.md).
 
-## What is included
+Follow the [hands-on walkthrough](docs/WALKTHROUGH.md) to inspect each command in a disposable example project.
+
+## Where the boundary sits
 
 ```text
-Markdown tasks
-    │
-    ▼
-schema validation ──► generated task index ──► dependency-aware selection
-    │                                                 │
-    └──────────── spec-readiness checks ◄─────────────┘
-                                                      │
-                                                      ▼
-append-only state ledger ◄── evidence gate ◄── start / complete / block
+Local project files                       External developer / agent / CI
+  Markdown tasks + specifications           implementation, tests, review
+           |                                           |
+           v                                           v
+  Task & Evidence CLI <-------------------- JSON completion report
+    validate / select / start / complete / block
+           |
+           v
+  Local task index + state journal
 ```
 
-- `task-index.mjs` validates task frontmatter and builds `loop/.tasks-index.json`.
-- `task-query.mjs` filters the index and selects the next dependency-ready task.
-- `spec-readiness.mjs` checks foundation documents, modules, unresolved markers, ADRs, decisions, and task integrity.
-- `verify-gate.mjs` validates a local JSON evidence record for tests, static analysis, and review.
-- `task-state.mjs` records `start`, `complete`, and `block` events in `loop/.state.jsonl`.
-- `demo.mjs` runs the complete synthetic success or blocked scenario.
+The external side is an integration boundary, not an included adapter. See [ARCHITECTURE.md](ARCHITECTURE.md) for scheduling and state replay.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the boundaries and data flow.
+## Commands and project files
 
-## Task format
+Commands operate on the **current working directory**:
 
-Create `loop/tasks/FEATURE-001.md`:
+| Command | Purpose |
+| --- | --- |
+| `task-index.mjs --rebuild` | Validate definitions and rebuild the task index |
+| `task-query.mjs --pick-ready --json` | Select a dependency-ready pending task |
+| `spec-readiness.mjs --json` | Report structural specification readiness; exit 1 on failure |
+| `task-state.mjs start TASK-ID` | Record a valid start transition |
+| `verify-gate.mjs TASK-ID --evidence path --json` | Validate a completion report without changing task state |
+| `task-state.mjs complete TASK-ID --evidence path` | Validate the report and record completion |
+| `task-state.mjs block TASK-ID --reason text` | Explicitly record a blocker |
 
-```markdown
----
-id: FEATURE-001
-title: Add a deterministic example
-status: pending
-milestone: M1
-phase: build
-priority: HIGH
-serves: developer-experience
-depends: []
-specs:
-  - docs/specs/modules/example/03-behavior.md
-created_at: 2026-10-12T00:00:00Z
----
+These are Node scripts under `scripts/`, not installed shell commands. Prefix each with `node` and its path as shown in the walkthrough.
 
-# Acceptance criteria
+| Path | Contents |
+| --- | --- |
+| `loop/tasks/*.md` | Task definitions, initially `pending` |
+| `docs/specs/` | Specification files for the structural readiness check |
+| `loop/evidence/*.json` | Reports supplied by the external workflow |
+| `loop/.tasks-index.json` | Generated task index |
+| `loop/.state.jsonl` | Local state-transition journal |
 
-- The behavior is covered by an automated test.
-```
+The checked-in [task example](examples/successful/loop/tasks/DEMO-001.md) and [report example](examples/successful/loop/evidence/DEMO-001.json) show the supported formats. Task Markdown remains unchanged during transitions; current status is reconstructed from definitions and journal events.
 
-Task files are definitions and must begin with `status: pending`. Runtime transitions go to the append-only state ledger instead of rewriting the task document, so a task cannot appear completed without a recorded gated transition.
+## Trust and current limits
 
-## Evidence format
+A valid report says that its required checks passed. **The CLI does not establish that they really ran, that the report belongs to a specific commit, or that its author is trustworthy.** A production integration would need authenticated results tied to the work being approved.
 
-Create `loop/evidence/FEATURE-001.json`:
+The project directory is trusted local input. The journal is designed for one local writer and is editable by anyone with filesystem access; it is neither tamper-proof nor safe for concurrent runners. Readiness checks cover file structure and recognised markers, rather than semantic specification quality. See [SECURITY.md](SECURITY.md).
 
-```json
-{
-  "task_id": "FEATURE-001",
-  "recorded_at": "2026-10-12T00:05:00Z",
-  "checks": {
-    "tests": { "status": "pass", "evidence": "node --test: 12 passed" },
-    "static_analysis": { "status": "pass", "evidence": "typecheck completed" },
-    "review": { "status": "pass", "evidence": "independent review: no blocking findings" }
-  }
-}
-```
+This repository's synthetic examples and test suite demonstrate the reference core's behaviour. They provide no benchmark of model quality, production delivery throughput or adoption by other developers.
 
-The gate validates this record; it does not execute the commands named in it. A production integration should generate evidence from trusted CI artifacts and sign or otherwise authenticate it.
+## License and contributions
 
-## CLI
+[MIT License](LICENSE), copyright Jonas Fendel. The repository began with a fresh source-only history; its public provenance is described in [PROVENANCE.md](PROVENANCE.md).
 
-Run commands from a project root containing `loop/tasks`:
-
-```bash
-node scripts/task-index.mjs --rebuild
-node scripts/task-index.mjs --validate
-node scripts/task-query.mjs --pick-ready --json
-node scripts/task-query.mjs --filter status=pending --json
-node scripts/spec-readiness.mjs --json
-node scripts/task-state.mjs start FEATURE-001
-node scripts/verify-gate.mjs FEATURE-001 --evidence loop/evidence/FEATURE-001.json --json
-node scripts/task-state.mjs complete FEATURE-001 --evidence loop/evidence/FEATURE-001.json
-node scripts/task-state.mjs block FEATURE-001 --reason "Review found a release blocker"
-```
-
-Each command uses the current working directory as the project boundary. User-supplied evidence paths must remain inside that directory.
-
-## Scope and limits
-
-This repository is a compact reference implementation extracted and rewritten from privately maintained delivery tooling. It demonstrates deterministic orchestration primitives, not an autonomous coding agent or a production deployment platform. The examples are synthetic, and their results are not performance benchmarks.
-
-Released under the [MIT License](LICENSE). This repository starts with a fresh source-only history; private delivery tooling and its history remain separate.
-
-## Contributing
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md). Security boundaries are documented in [SECURITY.md](SECURITY.md), and extraction provenance is recorded in [PROVENANCE.md](PROVENANCE.md).
+For development, read [CONTRIBUTING.md](CONTRIBUTING.md). Keep external execution separate from this small local CLI.

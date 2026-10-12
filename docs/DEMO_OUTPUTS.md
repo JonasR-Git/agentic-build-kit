@@ -1,6 +1,6 @@
-# Verified demo outputs
+# Captured workflow simulations
 
-Captured on 2026-10-12 with Node.js v24.19.0. Both commands operate on temporary copies of synthetic examples.
+Captured on 2026-10-12 with Node.js v22.13.1. Both commands operate on temporary copies of fictional example projects and consume prewritten synthetic completion reports. These outputs verify the CLI's selection, report-validation and state-transition behaviour. They do not show AI-generated implementation or independently executed project checks.
 
 ## Successful gate
 

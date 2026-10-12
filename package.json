@@ -2,7 +2,15 @@
   "name": "agentic-build-kit",
   "version": "0.1.0",
   "license": "MIT",
-  "description": "A deterministic local control plane for task-driven software delivery",
+  "description": "Local Task & Evidence CLI: task selection, state tracking and validation of externally supplied completion reports",
+  "homepage": "https://github.com/JonasR-Git/agentic-build-kit#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JonasR-Git/agentic-build-kit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JonasR-Git/agentic-build-kit/issues"
+  },
   "type": "module",
   "private": true,
   "scripts": {

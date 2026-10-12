@@ -1,5 +1,8 @@
 node_modules/
-loop/.tasks-index.json
-loop/.state.jsonl
+**/loop/.tasks-index.json
+**/loop/.state.jsonl
+.env
+.env.*
+!.env.example
 *.log
 .DS_Store

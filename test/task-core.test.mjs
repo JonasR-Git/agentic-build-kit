@@ -34,6 +34,19 @@ test('task definitions cannot claim a completed initial state', () => {
   assert.ok(errors.some((error) => error.includes('must start with status "pending"')));
 });
 
+test('task definitions reject unreachable statuses and invalid spec entries', () => {
+  const base = {
+    id: 'DEMO-001', title: 'Demo', milestone: 'M1', phase: 'build',
+    priority: 'HIGH', serves: 'test', created_at: '2026-10-12T00:00:00Z', depends: [],
+  };
+  const skipped = validateTask({ ...base, status: 'skipped', specs: [] });
+  const invalidSpecs = validateTask({ ...base, status: 'pending', specs: ['', 42] });
+
+  assert.ok(skipped.some((error) => error.includes('invalid status "skipped"')));
+  assert.ok(invalidSpecs.some((error) => error.includes('specs[0] must be a non-empty path string')));
+  assert.ok(invalidSpecs.some((error) => error.includes('specs[1] must be a non-empty path string')));
+});
+
 test('readiness fails closed on an unresolved specification marker', () => {
   const { temporary, project } = copyExample('successful');
   try {
@@ -46,7 +59,87 @@ test('readiness fails closed on an unresolved specification marker', () => {
   }
 });
 
-test('a passing evidence record enables an audited completion transition', () => {
+test('a planned missing task specification keeps the index valid but blocks readiness', () => {
+  const { temporary, project } = copyExample('successful');
+  try {
+    const taskPath = join(project, 'loop/tasks/DEMO-001.md');
+    const task = readFileSync(taskPath, 'utf8').replace(
+      'docs/specs/modules/notes/03-behavior.md',
+      'docs/specs/modules/notes/04-missing.md',
+    );
+    writeFileSync(taskPath, task);
+
+    const index = writeIndex(project);
+    const readiness = checkReadiness(project);
+    const declared = readiness.checks.find((check) => check.name === 'declared task specifications');
+
+    assert.equal(index.valid, true);
+    assert.equal(readiness.go, false);
+    assert.equal(declared.status, 'fail');
+    assert.match(declared.detail, /DEMO-001: .*04-missing\.md was not found/);
+  } finally {
+    cleanup(temporary);
+  }
+});
+
+test('readiness rejects a declared specification that resolves outside the project', () => {
+  const { temporary, project } = copyExample('successful');
+  try {
+    const outside = join(temporary, 'outside-specs');
+    mkdirSync(outside);
+    writeFileSync(join(outside, 'external.md'), '# External\n');
+    const linked = join(project, 'docs/specs/linked');
+    symlinkSync(outside, linked, process.platform === 'win32' ? 'junction' : 'dir');
+    const taskPath = join(project, 'loop/tasks/DEMO-001.md');
+    const task = readFileSync(taskPath, 'utf8').replace(
+      'docs/specs/modules/notes/03-behavior.md',
+      'docs/specs/linked/external.md',
+    );
+    writeFileSync(taskPath, task);
+
+    const readiness = checkReadiness(project);
+    const declared = readiness.checks.find((check) => check.name === 'declared task specifications');
+
+    assert.equal(readiness.go, false);
+    assert.equal(declared.status, 'fail');
+    assert.match(declared.detail, /resolves outside the project root/);
+  } finally {
+    cleanup(temporary);
+  }
+});
+
+test('start refuses a task while specification readiness is NO-GO', () => {
+  const { temporary, project } = copyExample('successful');
+  try {
+    appendFileSync(join(project, 'docs/specs/modules/notes/03-behavior.md'), '\n[?] Decide the identifier format.\n');
+
+    assert.throws(
+      () => transitionTask('start', 'DEMO-001', {}, project),
+      /spec readiness NO-GO: unresolved markers:/,
+    );
+    assert.equal(loadProject(project).tasks[0].status, 'pending');
+  } finally {
+    cleanup(temporary);
+  }
+});
+
+test('restarting a blocked task clears its active blocked reason', () => {
+  const { temporary, project } = copyExample('successful');
+  try {
+    transitionTask('start', 'DEMO-001', {}, project);
+    transitionTask('block', 'DEMO-001', { reason: 'Needs another pass' }, project);
+    assert.equal(loadProject(project).tasks[0].blocked_reason, 'Needs another pass');
+
+    transitionTask('start', 'DEMO-001', {}, project);
+    const resumed = loadProject(project).tasks[0];
+    assert.equal(resumed.status, 'in_progress');
+    assert.equal(resumed.blocked_reason, undefined);
+  } finally {
+    cleanup(temporary);
+  }
+});
+
+test('a schema-valid completion report enables a recorded completion transition', () => {
   const { temporary, project } = copyExample('successful');
   try {
     transitionTask('start', 'DEMO-001', {}, project);
